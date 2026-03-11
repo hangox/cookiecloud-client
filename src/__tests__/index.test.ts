@@ -2,30 +2,31 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { createHash, createCipheriv, randomBytes } from 'node:crypto';
 import { CookieCloudClient } from '../index.js';
 
-// Helper: encrypt data the same way CookieCloud does (OpenSSL compatible)
+// Helper: encrypt data the same way CookieCloud does (OpenSSL AES-256-CBC compatible)
 function encryptForTest(data: string, uuid: string, password: string): string {
-  const passKey = createHash('md5').update(`${uuid}-${password}`).digest().subarray(0, 16);
+  const passphrase = createHash('md5').update(`${uuid}-${password}`).digest('hex').substring(0, 16);
+  const passBytes = Buffer.from(passphrase, 'utf8');
   const salt = randomBytes(8);
 
-  // EVP_BytesToKey
-  const totalLen = 32; // 16 key + 16 iv
+  // EVP_BytesToKey: derive 32-byte key + 16-byte IV
+  const totalLen = 48; // 32 key + 16 iv
   const result: Buffer[] = [];
   let resultLen = 0;
   let prev = Buffer.alloc(0);
   while (resultLen < totalLen) {
     const hash = createHash('md5');
     if (prev.length > 0) hash.update(prev);
-    hash.update(passKey);
+    hash.update(passBytes);
     hash.update(salt);
     prev = hash.digest();
     result.push(prev);
     resultLen += prev.length;
   }
   const combined = Buffer.concat(result);
-  const derivedKey = combined.subarray(0, 16);
-  const iv = combined.subarray(16, 32);
+  const derivedKey = combined.subarray(0, 32);
+  const iv = combined.subarray(32, 48);
 
-  const cipher = createCipheriv('aes-128-cbc', derivedKey, iv);
+  const cipher = createCipheriv('aes-256-cbc', derivedKey, iv);
   const encrypted = Buffer.concat([cipher.update(data, 'utf8'), cipher.final()]);
   const output = Buffer.concat([Buffer.from('Salted__'), salt, encrypted]);
   return output.toString('base64');

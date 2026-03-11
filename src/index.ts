@@ -77,29 +77,31 @@ export class CookieCloudClient {
 }
 
 function decrypt(encrypted: string, uuid: string, password: string): string {
-  const key = createHash('md5')
+  // CookieCloud passphrase: first 16 chars of MD5 hex string
+  const passphrase = createHash('md5')
     .update(`${uuid}-${password}`)
-    .digest()
-    .subarray(0, 16);
+    .digest('hex')
+    .substring(0, 16);
 
-  // crypto-js AES.encrypt 默认使用 OpenSSL 格式:
+  // crypto-js AES.encrypt uses OpenSSL format:
   // Base64 decode → "Salted__" (8 bytes) + salt (8 bytes) + ciphertext
   const data = Buffer.from(encrypted, 'base64');
 
   const salted = data.subarray(0, 8).toString('utf8');
   if (salted !== 'Salted__') {
-    // 无 salt 前缀，直接作为密文处理（key 作为 key，前 16 字节作为 IV）
+    // No salt prefix — use passphrase as key with zero IV (fallback)
+    const key = Buffer.from(passphrase, 'utf8');
     const iv = Buffer.alloc(16, 0);
     const decipher = createDecipheriv('aes-128-cbc', key, iv);
     return Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
   }
 
-  // OpenSSL KDF: 从 password + salt 派生 key 和 iv
+  // OpenSSL KDF: derive 32-byte key + 16-byte IV from passphrase + salt (AES-256-CBC)
   const salt = data.subarray(8, 16);
   const ciphertext = data.subarray(16);
 
-  const { derivedKey, iv } = evpBytesToKey(key, salt, 16, 16);
-  const decipher = createDecipheriv('aes-128-cbc', derivedKey, iv);
+  const { derivedKey, iv } = evpBytesToKey(Buffer.from(passphrase, 'utf8'), salt, 32, 16);
+  const decipher = createDecipheriv('aes-256-cbc', derivedKey, iv);
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
 }
 
